@@ -1,4 +1,4 @@
-const API_BASE = process.env.REACT_APP_API_BASE || "/api";
+const API_BASE = process.env.REACT_APP_API_BASE || (process.env.NODE_ENV === 'production' ? 'https://your-django-backend.herokuapp.com/api' : '/api');
 
 export async function calculateTrip(input) {
   try {
