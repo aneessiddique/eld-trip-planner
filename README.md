@@ -1,4 +1,4 @@
-# Interstate TDG - HOS Trip Planner & ELD Log Generator
+# Interstate ELD Trip Planner
 
 A comprehensive Hours of Service (HOS) compliance solution for trucking operations. This full-stack application provides real-time trip planning, route optimization, and automated ELD log sheet generation to ensure regulatory compliance and operational efficiency.
 
