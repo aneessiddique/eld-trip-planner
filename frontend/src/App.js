@@ -44,8 +44,8 @@ function App() {
       setCycleUsed(response.cycle_used_hours);
       setSummary({
         route: `${values.current_location} → ${values.pickup_location} → ${values.dropoff_location}`,
-        totalDistance: response.route.distance_miles,
-        estimatedDuration: response.route.duration_hours,
+        totalDistance: response.route?.distance_miles ?? 0,
+        estimatedDuration: response.route?.duration_hours ?? 0,
         currentCycleUsed: values.current_cycle_used_hours,
       });
     } catch (err) {

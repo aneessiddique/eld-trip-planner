@@ -1,6 +1,6 @@
 from django.urls import path
-from .views import TripCalculatorAPIView
+from .views import CalculateTripView
 
 urlpatterns = [
-    path("calculate-trip/", TripCalculatorAPIView.as_view(), name="calculate_trip"),
+    path("calculate-trip/", CalculateTripView.as_view(), name="calculate_trip"),
 ]
