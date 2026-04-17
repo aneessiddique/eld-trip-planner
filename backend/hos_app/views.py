@@ -1,21 +1,49 @@
-from django.views import View
+import json
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from django.utils.decorators import method_decorator
-import json
 
 from .serializers import TripCalculatorSerializer
 from .hos_engine import calculate_trip_plan
 
 
-@method_decorator(csrf_exempt, name="dispatch")
-class CalculateTripView(View):
-    def post(self, request):
+def cors_response(data, status=200):
+    """
+    Helper function to add CORS headers to every single response.
+    This is required because Vercel serverless bypasses Django middleware.
+    """
+    if isinstance(data, JsonResponse):
+        response = data
+    else:
+        response = JsonResponse(data, status=status, safe=False)
+
+    response["Access-Control-Allow-Origin"] = "*"
+    response["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response["Access-Control-Allow-Headers"] = (
+        "Content-Type, Authorization, X-Requested-With, Accept, Origin"
+    )
+    response["Access-Control-Max-Age"] = "86400"
+    return response
+
+
+@csrf_exempt
+def calculate_trip(request):
+    # Step 1: Handle preflight OPTIONS request
+    # Browser sends OPTIONS before POST to check CORS
+    if request.method == "OPTIONS":
+        return cors_response({})
+
+    # Step 2: Handle actual POST request
+    if request.method == "POST":
         try:
             data = json.loads(request.body)
+
+            # Your existing trip calculation logic stays here
+            # Do NOT change any calculation logic
+            # Just make sure the final return uses cors_response
+
             serializer = TripCalculatorSerializer(data=data)
             if not serializer.is_valid():
-                return JsonResponse(serializer.errors, status=400)
+                return cors_response(serializer.errors, status=400)
 
             validated = serializer.validated_data
             result = calculate_trip_plan(
@@ -29,11 +57,21 @@ class CalculateTripView(View):
                 dropoff_stop_minutes=validated["dropoff_stop_minutes"],
                 fuel_interval_miles=validated["fuel_interval_miles"],
             )
-            return JsonResponse(result)
-        except Exception as e:
-            return JsonResponse({"error": str(e)}, status=400)
+            return cors_response(result)
 
-    def options(self, request, *args, **kwargs):
-        response = JsonResponse({})
-        response["Allow"] = "POST, OPTIONS"
-        return response
+        except json.JSONDecodeError:
+            return cors_response(
+                {"error": "Invalid JSON in request body"},
+                status=400
+            )
+        except Exception as e:
+            return cors_response(
+                {"error": str(e)},
+                status=500
+            )
+
+    # Step 3: Reject any other methods
+    return cors_response(
+        {"error": "Method not allowed"},
+        status=405
+    )
