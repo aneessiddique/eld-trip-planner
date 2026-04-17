@@ -64,9 +64,10 @@ STATIC_URL = "/static/"
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "https://eld-trip-planner-frontend-sage.vercel.app",
-    "https://eld-trip-planner-blue.vercel.app",
+    "https://eld-trip-planner-frontend-7vz4mx0i1-anees-siddiques-projects.vercel.app",
+    "https://eld-trip-planner-r08dq4qlq-anees-siddiques-projects.vercel.app",
 ]
+
 
 
 # Allow all origins in development, but restrict in production
