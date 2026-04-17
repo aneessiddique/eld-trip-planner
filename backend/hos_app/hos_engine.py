@@ -2,6 +2,7 @@ import requests
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta, time
 from typing import Any, Dict, List
+import re
 
 
 OFF_DUTY = "OFF_DUTY"
@@ -12,6 +13,61 @@ METER_TO_MILE = 0.000621371
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 OSRM_ROUTE_URL = "https://router.project-osrm.org/route/v1/driving"
 USER_AGENT = "InterstateTDG/1.0"
+COUNTRY_CODE_US = "us"
+COUNTRY_CODE_PK = "pk"
+
+PK_CITY_KEYWORDS = {
+    "KARACHI",
+    "LAHORE",
+    "ISLAMABAD",
+    "MULTAN",
+    "PESHAWAR",
+    "QUETTA",
+    "SUKKUR",
+    "HYDERABAD",
+}
+US_STATES = {
+    "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA",
+    "MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY"
+}
+US_STATE_REGEX = re.compile(r"\b(" + "|".join(US_STATES) + r")\b", re.IGNORECASE)
+PAKISTAN_REGEX = re.compile(r"\b(PAKISTAN|PAK)\b", re.IGNORECASE)
+
+
+def _detect_country_code(address: str) -> str:
+    text = address.strip().upper()
+    if PAKISTAN_REGEX.search(text) or any(city in text for city in PK_CITY_KEYWORDS):
+        return COUNTRY_CODE_PK
+
+    if ", US" in text or "USA" in text or "UNITED STATES" in text:
+        return COUNTRY_CODE_US
+
+    parts = [part.strip() for part in text.split(",") if part.strip()]
+    if parts and len(parts) > 1 and len(parts[-1]) == 2 and parts[-1].isalpha() and parts[-1] in US_STATES:
+        return COUNTRY_CODE_US
+
+    if US_STATE_REGEX.search(text):
+        return COUNTRY_CODE_US
+
+    return COUNTRY_CODE_US
+
+
+def _clean_location_display_name(display_name: str, default_code: str = "PK") -> str:
+    parts = [part.strip() for part in display_name.split(",") if part.strip()]
+    english_parts = []
+    for part in parts:
+        ascii_part = "".join(ch for ch in part if ord(ch) < 128).strip()
+        if ascii_part:
+            english_parts.append(ascii_part)
+        if len(english_parts) == 3:
+            break
+    if not english_parts:
+        ascii_display = "".join(ch for ch in display_name if ord(ch) < 128).strip()
+        english_parts = [ascii_display] if ascii_display else [display_name]
+    joined = ", ".join(english_parts)
+    if default_code and not joined.endswith(default_code):
+        joined = f"{joined}, {default_code}"
+    return joined
 
 
 @dataclass
@@ -37,9 +93,14 @@ def _build_datetime(date_obj: datetime, tzinfo):
 
 
 def _geocode_address(address: str) -> Dict[str, Any]:
+    country_code = _detect_country_code(address)
+    params = {"q": address, "format": "json", "limit": 1}
+    if country_code:
+        params["countrycodes"] = country_code
+
     response = requests.get(
         NOMINATIM_URL,
-        params={"q": address, "format": "json", "limit": 1},
+        params=params,
         headers={"User-Agent": USER_AGENT},
         timeout=15,
     )
@@ -52,6 +113,7 @@ def _geocode_address(address: str) -> Dict[str, Any]:
         "display_name": location.get("display_name", address),
         "lat": float(location["lat"]),
         "lon": float(location["lon"]),
+        "country_code": country_code.upper(),
     }
 
 
@@ -79,12 +141,15 @@ def _fetch_route(origin: Dict[str, Any], pickup: Dict[str, Any], dropoff: Dict[s
     for leg in route["legs"]:
         for step in leg["steps"]:
             maneuver = step.get("maneuver", {})
+            raw_name = (step.get("name") or maneuver.get("instruction") or "").strip()
+            instruction_text = raw_name if raw_name else "Unnamed Road"
+            road_name = step.get("name") or "Unnamed Road"
             instructions.append(
                 {
-                    "instruction": maneuver.get("instruction", step.get("name", "Continue")),
+                    "instruction": instruction_text,
                     "distance_miles": round(step.get("distance", 0.0) * METER_TO_MILE, 2),
                     "duration_hours": round(step.get("duration", 0.0) / 3600.0, 3),
-                    "road": step.get("name", ""),
+                    "road": road_name,
                 }
             )
 
@@ -321,6 +386,10 @@ def calculate_trip_plan(
     dropoff = _geocode_address(dropoff_location)
     route = _fetch_route(origin, pickup, dropoff)
 
+    origin_code = origin.get("country_code", "PK")
+    pickup_code = pickup.get("country_code", "PK")
+    dropoff_code = dropoff.get("country_code", "PK")
+
     entries: List[HosLogEntry] = []
     current_time = start_time
     cycle_hours = float(current_cycle_used_hours)
@@ -333,8 +402,11 @@ def calculate_trip_plan(
         "cycle_hours": cycle_hours,
     }
 
-    _schedule_break(entries, state, 10.0, "Pre-shift OFF DUTY rest", reset_shift=True)
-    _schedule_on_duty(entries, state, pre_trip_minutes / 60.0, "Pre-trip inspection", remarks="Pre-trip inspection")
+    pickup_remarks = _clean_location_display_name(pickup["display_name"], default_code=pickup_code)
+    dropoff_remarks = _clean_location_display_name(dropoff["display_name"], default_code=dropoff_code)
+    origin_remarks = _clean_location_display_name(origin["display_name"], default_code=origin_code)
+
+    _schedule_on_duty(entries, state, pre_trip_minutes / 60.0, "Pre-trip inspection", remarks=origin_remarks)
 
     legs = route["legs"]
     leg_labels = ["pickup", "dropoff"]
@@ -356,7 +428,7 @@ def calculate_trip_plan(
                 state,
                 pickup_stop_minutes / 60.0,
                 "Pickup stop",
-                remarks=pickup["display_name"],
+                remarks=pickup_remarks,
             )
         else:
             _schedule_on_duty(
@@ -364,10 +436,8 @@ def calculate_trip_plan(
                 state,
                 dropoff_stop_minutes / 60.0,
                 "Dropoff stop",
-                remarks=dropoff["display_name"],
+                remarks=dropoff_remarks,
             )
-
-    _schedule_break(entries, state, 10.0, "Post-trip OFF DUTY rest", reset_shift=True)
 
     daily_sheets = _build_daily_sheets(entries)
 

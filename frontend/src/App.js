@@ -16,7 +16,15 @@ function App() {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('map');
   const [loading, setLoading] = useState(false);
+  const [currentDateTime, setCurrentDateTime] = useState(new Date());
   const phase2Ref = useRef(null);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentDateTime(new Date());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     if (summary) {
@@ -47,17 +55,12 @@ function App() {
     }
   };
 
-  // Mock coordinates for map
-  const mapPoints = route ? [
-    [41.8781, -87.6298], // Chicago
-    [39.7684, -86.1581], // Indianapolis
-    [38.2527, -85.7585], // Louisville
-  ] : [];
+  const mapPoints = route?.geometry || [];
 
   return (
     <div className="min-h-screen pb-12 font-sans selection:bg-blue-100">
       {/* Header */}
-      <header className="bg-slate-900 text-white py-6 px-4 sticky top-0 z-50 shadow-lg border-b border-white/10">
+      <header className="bg-slate-900 text-white py-3 px-4 sticky top-0 z-50 shadow-lg border-b border-white/10">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="bg-blue-600 p-2 rounded-xl shadow-lg ring-4 ring-blue-600/20">
@@ -65,16 +68,12 @@ function App() {
             </div>
             <div>
               <h1 className="text-2xl font-black uppercase tracking-tighter leading-none italic">
-                Interstate <span className="text-blue-500">TDG</span>
+                ELD Trip <span className="text-blue-500">PLANNER</span>
               </h1>
             </div>
           </div>
-          <div className="hidden md:flex gap-6 items-center">
-            <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/20 px-3 py-1.5 rounded-full">
-              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-              <span className="text-[10px] font-bold text-green-500 uppercase tracking-wider">System Online</span>
-            </div>
-            <div className="h-8 w-[1px] bg-white/10"></div>
+          <div className="hidden md:flex gap-6 items-center text-slate-200 text-[16px] tracking-widest">
+            <span>{`${String(currentDateTime.getDate()).padStart(2, '0')}/${String(currentDateTime.getMonth() + 1).padStart(2, '0')}/${String(currentDateTime.getFullYear()).slice(-2)} ${String(currentDateTime.getHours()).padStart(2, '0')}:${String(currentDateTime.getMinutes()).padStart(2, '0')}:${String(currentDateTime.getSeconds()).padStart(2, '0')}`}</span>
           </div>
         </div>
       </header>
@@ -84,7 +83,7 @@ function App() {
         <section>
           <div className="flex items-center gap-2 mb-4">
             <Info className="w-5 h-5 text-blue-500" />
-            <h2 className="text-sm font-black uppercase tracking-widest text-slate-600 italic">Phase 1: Trip Parameters</h2>
+            <h2 className="text-sm font-black uppercase tracking-widest text-slate-600 italic">Trip Parameters</h2>
           </div>
           <TripInputForm onCalculate={handleCalculate} loading={loading} />
         </section>
@@ -95,7 +94,7 @@ function App() {
             <section>
               <div className="flex items-center gap-2 mb-4">
                 <ClipboardList className="w-5 h-5 text-green-500" />
-                <h2 className="text-sm font-black uppercase tracking-widest text-slate-600 italic">Phase 2: Live Summary</h2>
+                <h2 className="text-sm font-black uppercase tracking-widest text-slate-600 italic">Live Summary</h2>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <StatCard 
@@ -161,7 +160,7 @@ function App() {
                 ) : (
                   <div className="space-y-6">
                     {dailySheets.map((log, i) => (
-                      <LogSheetRenderer key={i} log={log} />
+                      <LogSheetRenderer key={i} log={log} route={route} />
                     ))}
                   </div>
                 )}
@@ -173,12 +172,6 @@ function App() {
         {error && <div className="app-error">{error}</div>}
       </main>
       
-      {/* Footer Branding */}
-      <footer className="mt-20 text-center text-slate-400">
-        <p className="text-[10px] font-bold uppercase tracking-[0.3em]">
-          Certified HOS Compliance Framework v4.2
-        </p>
-      </footer>
     </div>
   );
 }
