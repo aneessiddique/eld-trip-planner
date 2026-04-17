@@ -6,8 +6,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-change-me')
 DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
 
-# Allow all hosts - required for Vercel deployment
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = [
+    'localhost',
+    '127.0.0.1',
+    '.railway.app',      # ✅ Railway domain
+    '.vercel.app',       # ✅ Vercel frontend
+    '*',
+]
 
 INSTALLED_APPS = [
     "django.contrib.auth",
@@ -20,9 +25,8 @@ INSTALLED_APPS = [
     "hos_app",
 ]
 
-# CorsMiddleware MUST be the absolute first middleware
 MIDDLEWARE = [
-    "corsheaders.middleware.CorsMiddleware",           # FIRST - DO NOT MOVE
+    "corsheaders.middleware.CorsMiddleware",          # FIRST
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -65,18 +69,11 @@ USE_TZ = True
 
 STATIC_URL = "/static/"
 STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
-# CORS Configuration
-# CORS_ALLOW_ALL_ORIGINS must NOT be inside any if block
-# It must always be True at the top level
+# ✅ CORS - Allow everything
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
-
-CORS_ALLOWED_ORIGIN_REGEXES = [
-    r"^https://.*\.vercel\.app$",
-    r"^http://localhost:\d+$",
-    r"^http://127\.0\.0\.1:\d+$",
-]
 
 CORS_ALLOW_METHODS = [
     "DELETE",
@@ -97,13 +94,12 @@ CORS_ALLOW_HEADERS = [
     "user-agent",
     "x-csrftoken",
     "x-requested-with",
-    "access-control-allow-origin",
 ]
 
 CSRF_TRUSTED_ORIGINS = [
+    "https://*.railway.app",
     "https://*.vercel.app",
     "http://localhost:3000",
-    "http://127.0.0.1:3000",
 ]
 
 REST_FRAMEWORK = {
