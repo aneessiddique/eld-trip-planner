@@ -1,8 +1,8 @@
-const API_BASE = "/api";
+const API_BASE = process.env.REACT_APP_API_BASE || "/api";
 
 export async function calculateTrip(input) {
   try {
-    const response = await fetch(`${API_BASE}/calculate-trip/`, {
+    const response = await fetch(`${API_BASE.replace(/\/$/, "")}/calculate-trip/`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
