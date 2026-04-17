@@ -5,7 +5,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-change-me')
 DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
-ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '').split(',') if os.environ.get('ALLOWED_HOSTS') else ['*']
+ALLOWED_HOSTS = ['*']
 
 INSTALLED_APPS = [
     "django.contrib.auth",
@@ -18,9 +18,10 @@ INSTALLED_APPS = [
     "hos_app",
 ]
 
+# ✅ FIX 1: CorsMiddleware is NOW FIRST
 MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",          # ← FIRST LINE
     "django.middleware.security.SecurityMiddleware",
-    "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -61,18 +62,17 @@ USE_TZ = True
 
 STATIC_URL = "/static/"
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "https://eld-trip-planner-frontend-7vz4mx0i1-anees-siddiques-projects.vercel.app",
-    "https://eld-trip-planner-r08dq4qlq-anees-siddiques-projects.vercel.app",
+# ✅ FIX 2: CORS_ALLOW_ALL_ORIGINS always True (no DEBUG condition)
+CORS_ALLOW_ALL_ORIGINS = True
+
+# ✅ FIX 3: Regex covers ALL vercel.app URLs (no hardcoded URLs needed)
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https://.*\.vercel\.app$",
+    r"^http://localhost:\d+$",
+    r"^http://127\.0\.0\.1:\d+$",
 ]
 
-
-
-# Allow all origins in development, but restrict in production
-if DEBUG:
-    CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True
 
 CORS_ALLOW_METHODS = [
     "DELETE",
@@ -91,6 +91,14 @@ CORS_ALLOW_HEADERS = [
     "origin",
     "x-csrftoken",
     "x-requested-with",
+    "access-control-allow-origin",
+]
+
+# ✅ FIX 4: CSRF trusted origins for Vercel
+CSRF_TRUSTED_ORIGINS = [
+    "https://*.vercel.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
 ]
 
 REST_FRAMEWORK = {
