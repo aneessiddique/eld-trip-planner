@@ -1,5 +1,5 @@
 import React from "react";
-import { Clock, MapPin, Fuel, Bed, Truck } from "lucide-react";
+import { Clock, MapPin, Bed, Truck } from "lucide-react";
 
 const STATUS_ROW = {
   OFF_DUTY: 0,
@@ -30,8 +30,12 @@ const STATUS_ICON = {
 };
 
 const hourWidth = 32;
-const svgWidth = hourWidth * 24 + 80;
+/** Width of the status-label column (icons + text) on the left of the grid */
+const labelColWidth = 100;
+const chartRightMargin = 20;
+const svgWidth = labelColWidth + hourWidth * 24 + chartRightMargin;
 const rowHeight = 28;
+const chartHeight = rowHeight * 4 + 40;
 
 function getTimePosition(dateString) {
   const date = new Date(dateString);
@@ -51,7 +55,7 @@ function LogSheetRenderer({ log }) {
   }
 
   return (
-    <div className="bg-white rounded-2xl shadow-md border border-slate-200 p-6">
+    <div className="w-full min-w-0 bg-white rounded-2xl shadow-md border border-slate-200 p-6">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h3 className="text-lg font-bold text-slate-800">{log.date}</h3>
@@ -84,11 +88,18 @@ function LogSheetRenderer({ log }) {
         </div>
       </div>
 
-      <div className="mb-6 overflow-x-auto">
-        <svg width={svgWidth} height={rowHeight * 4 + 40} className="border border-slate-200 rounded-lg">
+      <div className="mb-6 w-full min-w-0">
+        <svg
+          viewBox={`0 0 ${svgWidth} ${chartHeight}`}
+          width="100%"
+          style={{ aspectRatio: `${svgWidth} / ${chartHeight}` }}
+          preserveAspectRatio="xMinYMin meet"
+          className="block w-full border border-slate-200 rounded-lg"
+          aria-label="24-hour duty status grid"
+        >
           {/* Hour markers */}
           {[...Array(25)].map((_, index) => {
-            const x = index * hourWidth + 60;
+            const x = index * hourWidth + labelColWidth;
             const isMajor = index % 4 === 0;
             return (
               <g key={index}>
@@ -122,7 +133,7 @@ function LogSheetRenderer({ log }) {
                 <rect
                   x={0}
                   y={rowIndex * rowHeight}
-                  width={60}
+                  width={labelColWidth}
                   height={rowHeight}
                   fill="#f8fafc"
                   stroke="#e2e8f0"
@@ -132,11 +143,11 @@ function LogSheetRenderer({ log }) {
                     <Icon size={12} className="text-slate-600" />
                   </div>
                 </foreignObject>
-                <text x={30} y={y} fontSize="10" fill="#374151" className="font-medium">
+                <text x={28} y={y} fontSize="10" fill="#374151" className="font-medium">
                   {STATUS_LABEL[status]}
                 </text>
                 <line
-                  x1={60}
+                  x1={labelColWidth}
                   y1={rowIndex * rowHeight + rowHeight - 1}
                   x2={svgWidth}
                   y2={rowIndex * rowHeight + rowHeight - 1}
@@ -149,7 +160,7 @@ function LogSheetRenderer({ log }) {
 
           {/* Event overlays */}
           {log.entries?.map((entry, index) => {
-            const x = 60 + getTimePosition(entry.start_time);
+            const x = labelColWidth + getTimePosition(entry.start_time);
             const width = Math.max(2, entry.duration_hours * hourWidth);
             const y = STATUS_ROW[entry.status] * rowHeight + 2;
             return (

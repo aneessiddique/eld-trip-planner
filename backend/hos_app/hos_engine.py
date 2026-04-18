@@ -2,7 +2,7 @@ import requests
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta, time
 from typing import Any, Dict, List
-import re
+import time as time_module
 
 
 OFF_DUTY = "OFF_DUTY"
@@ -13,61 +13,44 @@ METER_TO_MILE = 0.000621371
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 OSRM_ROUTE_URL = "https://router.project-osrm.org/route/v1/driving"
 USER_AGENT = "InterstateTDG/1.0"
-COUNTRY_CODE_US = "us"
-COUNTRY_CODE_PK = "pk"
-
-PK_CITY_KEYWORDS = {
-    "KARACHI",
-    "LAHORE",
-    "ISLAMABAD",
-    "MULTAN",
-    "PESHAWAR",
-    "QUETTA",
-    "SUKKUR",
-    "HYDERABAD",
-}
-US_STATES = {
-    "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA",
-    "MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY"
-}
-US_STATE_REGEX = re.compile(r"\b(" + "|".join(US_STATES) + r")\b", re.IGNORECASE)
-PAKISTAN_REGEX = re.compile(r"\b(PAKISTAN|PAK)\b", re.IGNORECASE)
 
 
-def _detect_country_code(address: str) -> str:
-    text = address.strip().upper()
-    if PAKISTAN_REGEX.search(text) or any(city in text for city in PK_CITY_KEYWORDS):
-        return COUNTRY_CODE_PK
+def _clean_location_display_name(
+    display_name: str,
+    default_code: str = "",
+) -> str:
+    """
+    Extract clean English-only text from a geocoded display name.
+    Strips non-ASCII characters, limits to first 3 comma-separated parts.
+    """
+    if not display_name:
+        return ""
 
-    if ", US" in text or "USA" in text or "UNITED STATES" in text:
-        return COUNTRY_CODE_US
-
-    parts = [part.strip() for part in text.split(",") if part.strip()]
-    if parts and len(parts) > 1 and len(parts[-1]) == 2 and parts[-1].isalpha() and parts[-1] in US_STATES:
-        return COUNTRY_CODE_US
-
-    if US_STATE_REGEX.search(text):
-        return COUNTRY_CODE_US
-
-    return COUNTRY_CODE_US
-
-
-def _clean_location_display_name(display_name: str, default_code: str = "PK") -> str:
-    parts = [part.strip() for part in display_name.split(",") if part.strip()]
+    parts = [p.strip() for p in display_name.split(",") if p.strip()]
     english_parts = []
+
     for part in parts:
+        # Keep only ASCII characters
         ascii_part = "".join(ch for ch in part if ord(ch) < 128).strip()
         if ascii_part:
             english_parts.append(ascii_part)
-        if len(english_parts) == 3:
+        if len(english_parts) >= 3:
             break
+
     if not english_parts:
-        ascii_display = "".join(ch for ch in display_name if ord(ch) < 128).strip()
-        english_parts = [ascii_display] if ascii_display else [display_name]
-    joined = ", ".join(english_parts)
-    if default_code and not joined.endswith(default_code):
-        joined = f"{joined}, {default_code}"
-    return joined
+        # Last resort: strip all non-ASCII from entire string
+        fallback = "".join(
+            ch for ch in display_name if ord(ch) < 128
+        ).strip()
+        english_parts = [fallback] if fallback else [display_name]
+
+    result = ", ".join(english_parts)
+
+    # Append country code if provided and not already present
+    if default_code and default_code.upper() not in result.upper():
+        result = f"{result}, {default_code}"
+
+    return result
 
 
 @dataclass
@@ -92,28 +75,139 @@ def _build_datetime(date_obj: datetime, tzinfo):
     return datetime(date_obj.year, date_obj.month, date_obj.day, tzinfo=tzinfo)
 
 
-def _geocode_address(address: str) -> Dict[str, Any]:
-    country_code = _detect_country_code(address)
-    params = {"q": address, "format": "json", "limit": 1}
-    if country_code:
-        params["countrycodes"] = country_code
+def _make_request_with_retry(url, params=None, headers=None, timeout=15, max_retries=3):
+    """
+    Make HTTP request with retry logic.
+    Retries up to max_retries times with exponential backoff.
+    """
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(
+                url,
+                params=params,
+                headers=headers or {"User-Agent": USER_AGENT},
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            return response
+        except requests.exceptions.Timeout:
+            last_error = f"Request timed out after {timeout}s"
+            time_module.sleep(2**attempt)
+        except requests.exceptions.ConnectionError:
+            last_error = "Connection error - service may be unavailable"
+            time_module.sleep(2**attempt)
+        except requests.exceptions.HTTPError as e:
+            last_error = f"HTTP error: {e}"
+            status = e.response.status_code if e.response is not None else None
+            if status is not None and status < 500:
+                raise
+            time_module.sleep(2**attempt)
+    raise ValueError(f"API request failed after {max_retries} attempts: {last_error}")
 
-    response = requests.get(
+
+def _geocode_address(address: str) -> Dict[str, Any]:
+    """
+    Geocode any address worldwide using Nominatim.
+    No country pre-detection needed.
+    Country code is extracted directly from Nominatim response.
+    Works for any city, any country, any address format.
+    """
+    if not address or not address.strip():
+        raise ValueError("Address cannot be empty")
+
+    # Step 1: Try geocoding with the address as-is
+    params = {
+        "q": address.strip(),
+        "format": "json",
+        "limit": 1,
+        "addressdetails": 1,  # Ask Nominatim to return address breakdown
+    }
+
+    response = _make_request_with_retry(
         NOMINATIM_URL,
         params=params,
         headers={"User-Agent": USER_AGENT},
         timeout=15,
     )
-    response.raise_for_status()
     results = response.json()
+
+    # Step 2: If no results, try with broader search
     if not results:
-        raise ValueError(f"Unable to geocode address: {address}")
+        params_broad = {
+            "q": address.strip(),
+            "format": "json",
+            "limit": 3,
+            "addressdetails": 1,
+        }
+        response = _make_request_with_retry(
+            NOMINATIM_URL,
+            params=params_broad,
+            headers={"User-Agent": USER_AGENT},
+            timeout=15,
+        )
+        results = response.json()
+
+    if not results:
+        raise ValueError(
+            f"Location not found: '{address}'. "
+            f"Please try a more specific address like "
+            f"'Chicago, IL' or 'London, UK'."
+        )
+
     location = results[0]
+
+    # Step 3: Extract country code directly from Nominatim response
+    # Nominatim returns address breakdown when addressdetails=1
+    address_details = location.get("address", {})
+
+    # country_code comes directly from Nominatim - no guessing needed
+    country_code = address_details.get("country_code", "").upper()
+    country_name = address_details.get("country", "")
+
+    # Build a clean display name from address components
+    city = (
+        address_details.get("city")
+        or address_details.get("town")
+        or address_details.get("village")
+        or address_details.get("municipality")
+        or address_details.get("county")
+        or ""
+    )
+    state = (
+        address_details.get("state")
+        or address_details.get("province")
+        or address_details.get("region")
+        or ""
+    )
+
+    # Build clean English display name
+    display_parts = []
+    if city:
+        display_parts.append(city)
+    if state:
+        display_parts.append(state)
+    if country_code:
+        display_parts.append(country_code)
+
+    # Use built display name if we have parts, else fall back to raw
+    clean_display = (
+        ", ".join(display_parts)
+        if display_parts
+        else _clean_location_display_name(
+            location.get("display_name", address)
+        )
+    )
+
     return {
-        "display_name": location.get("display_name", address),
+        "display_name": clean_display,
+        "raw_display_name": location.get("display_name", address),
         "lat": float(location["lat"]),
         "lon": float(location["lon"]),
-        "country_code": country_code.upper(),
+        "country_code": country_code,
+        "country_name": country_name,
+        "city": city,
+        "state": state,
     }
 
 
@@ -125,12 +219,16 @@ def _fetch_route(origin: Dict[str, Any], pickup: Dict[str, Any], dropoff: Dict[s
             f"{dropoff['lon']},{dropoff['lat']}",
         ]
     )
-    response = requests.get(
+    response = _make_request_with_retry(
         f"{OSRM_ROUTE_URL}/{coords}",
-        params={"overview": "full", "geometries": "geojson", "steps": "true", "annotations": "duration,distance"},
+        params={
+            "overview": "full",
+            "geometries": "geojson",
+            "steps": "true",
+            "annotations": "duration,distance",
+        },
         timeout=30,
     )
-    response.raise_for_status()
     payload = response.json()
     if payload.get("code") != "Ok" or not payload.get("routes"):
         raise ValueError("Unable to build route for the requested trip")
@@ -310,7 +408,11 @@ def _schedule_on_duty(entries: List[HosLogEntry], state: Dict[str, Any], duratio
 
 
 def _schedule_driving_segment(entries: List[HosLogEntry], state: Dict[str, Any], leg_label: str, remaining_hours: float, remaining_miles: float, fuel_interval_miles: int):
-    speed = remaining_miles / remaining_hours if remaining_hours > 0 else 55.0
+    if remaining_hours > 0 and remaining_miles > 0:
+        speed = remaining_miles / remaining_hours
+        speed = max(25.0, min(80.0, speed))
+    else:
+        speed = 55.0
     destination_label = leg_label
 
     while remaining_hours > 0.01:
@@ -381,14 +483,43 @@ def calculate_trip_plan(
     dropoff_stop_minutes: int = 60,
     fuel_interval_miles: int = 1000,
 ) -> Dict[str, Any]:
+    if not current_location or not current_location.strip():
+        raise ValueError(
+            "Current location is required. "
+            "Example: 'Chicago, IL' or 'London, UK'"
+        )
+    if not pickup_location or not pickup_location.strip():
+        raise ValueError(
+            "Pickup location is required. "
+            "Example: 'Indianapolis, IN' or 'Manchester, UK'"
+        )
+    if not dropoff_location or not dropoff_location.strip():
+        raise ValueError(
+            "Dropoff location is required. "
+            "Example: 'Louisville, KY' or 'Birmingham, UK'"
+        )
+    if current_cycle_used_hours < 0:
+        raise ValueError(
+            "Current cycle used hours cannot be negative."
+        )
+    if current_cycle_used_hours >= 70:
+        raise ValueError(
+            "Driver has used 70 or more hours in the cycle. "
+            "A 34-hour restart is required before this trip."
+        )
+
     origin = _geocode_address(current_location)
+    time_module.sleep(1.1)
     pickup = _geocode_address(pickup_location)
+    time_module.sleep(1.1)
     dropoff = _geocode_address(dropoff_location)
     route = _fetch_route(origin, pickup, dropoff)
 
-    origin_code = origin.get("country_code", "PK")
-    pickup_code = pickup.get("country_code", "PK")
-    dropoff_code = dropoff.get("country_code", "PK")
+    # Country codes now come dynamically from Nominatim response
+    # No hardcoded defaults needed
+    origin_code = origin.get("country_code", "")
+    pickup_code = pickup.get("country_code", "")
+    dropoff_code = dropoff.get("country_code", "")
 
     entries: List[HosLogEntry] = []
     current_time = start_time
@@ -402,9 +533,11 @@ def calculate_trip_plan(
         "cycle_hours": cycle_hours,
     }
 
-    pickup_remarks = _clean_location_display_name(pickup["display_name"], default_code=pickup_code)
-    dropoff_remarks = _clean_location_display_name(dropoff["display_name"], default_code=dropoff_code)
-    origin_remarks = _clean_location_display_name(origin["display_name"], default_code=origin_code)
+    # display_name is already clean because _geocode_address
+    # builds it from structured Nominatim address components
+    pickup_remarks = pickup.get("display_name", pickup_location)
+    dropoff_remarks = dropoff.get("display_name", dropoff_location)
+    origin_remarks = origin.get("display_name", current_location)
 
     _schedule_on_duty(entries, state, pre_trip_minutes / 60.0, "Pre-trip inspection", remarks=origin_remarks)
 
@@ -449,6 +582,9 @@ def calculate_trip_plan(
             "origin": origin["display_name"],
             "pickup": pickup["display_name"],
             "dropoff": dropoff["display_name"],
+            "origin_country": origin.get("country_name", ""),
+            "pickup_country": pickup.get("country_name", ""),
+            "dropoff_country": dropoff.get("country_name", ""),
         },
         "instructions": route["instructions"],
         "cycle_used_hours": round(cycle_hours, 2),

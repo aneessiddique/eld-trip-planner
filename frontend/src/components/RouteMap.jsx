@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -10,11 +10,24 @@ L.Icon.Default.mergeOptions({
   shadowUrl: require("leaflet/dist/images/marker-shadow.png"),
 });
 
+/**
+ * Fits the map to the route once when the route geometry changes — not on every
+ * parent re-render (e.g. clock ticks). Calling fitBounds during render was
+ * resetting zoom whenever the user panned/zoomed manually.
+ */
 function FitBounds({ bounds }) {
   const map = useMap();
-  if (bounds && bounds.length > 0) {
-    map.fitBounds(bounds, { padding: [30, 30] });
-  }
+  const fittedKeyRef = useRef(null);
+
+  useEffect(() => {
+    if (!bounds || bounds.length === 0) return;
+    const key = JSON.stringify(bounds);
+    if (key === fittedKeyRef.current) return;
+    fittedKeyRef.current = key;
+
+    map.fitBounds(L.latLngBounds(bounds), { padding: [30, 30] });
+  }, [map, bounds]);
+
   return null;
 }
 
